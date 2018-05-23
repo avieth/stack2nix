@@ -87,23 +87,27 @@ render results args locals ghcnixversion = do
      Nothing    -> putStrLn out
 
 renderOne :: Args -> [String] -> Derivation -> Doc
-renderOne args locals drv' = nest 6 $ PP.hang
-  (PP.doubleQuotes (text pid) <> " = callPackage")
-  2
-  ("(" <> pPrint drv <> ") {" <> text (show pkgs) <> "};")
+renderOne args locals drv' = output
  where
+  output = nest 6 $ PP.hang
+    (PP.doubleQuotes (text pid) <> " = callPackage")
+    2
+    ("(" <> pPrint drv <> ") {" <> text (show pkgs) <> "};")
   pid  = drvToName drv
   deps = view dependencies drv
+  allDeps = Set.union (view pkgconfig deps) (view system deps)
   nixPkgs :: [Binding]
-  nixPkgs  = Set.toList $ Set.union (view pkgconfig deps) (view system deps)
+  nixPkgs  = Set.toList allDeps
   -- filter out libX stuff to prevent breakage in generated set
-  nonXpkgs = filter
-    (\e -> not
-      (                      "libX"
-      `Data.List.isPrefixOf` (display (((view (reference . path) e) !! 1)))
-      )
-    )
-    nixPkgs
+  -- We're after things that look like
+  --
+  --   inhert (pkgs.xorg) libX*
+  --
+  -- which means we want to check the 3rd item of the identifier list.
+  pkgFilter e = case view (reference . path) e of
+    (_:_:ident:_) -> not ("libX" `Data.List.isPrefixOf` display ident)
+    _ -> True
+  nonXpkgs = filter pkgFilter nixPkgs
   pkgs = fcat $ punctuate space [ disp b <> semi | b <- nonXpkgs ]
   drv =
     filterDepends args isLocal drv'
